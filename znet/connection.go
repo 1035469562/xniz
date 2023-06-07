@@ -1,7 +1,9 @@
 package znet
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"xniz/ziface"
 )
@@ -10,16 +12,16 @@ type Connection struct {
 	Conn         *net.TCPConn
 	ConnID       uint32
 	isClosed     bool
-	Router       ziface.IRouter
+	MsgHandler   ziface.IMsgHandle
 	ExitBuffChan chan bool
 }
 
-func NewConnection(conn *net.TCPConn, connID uint32, router ziface.IRouter) *Connection {
+func NewConnection(conn *net.TCPConn, connID uint32, msgHandler ziface.IMsgHandle) *Connection {
 	c := &Connection{
 		Conn:         conn,
 		ConnID:       connID,
 		isClosed:     false,
-		Router:       router,
+		MsgHandler:   msgHandler,
 		ExitBuffChan: make(chan bool, 1),
 	}
 	return c
@@ -28,22 +30,46 @@ func NewConnection(conn *net.TCPConn, connID uint32, router ziface.IRouter) *Con
 func (c *Connection) StartReader() {
 	defer c.Stop()
 	for {
-		buf := make([]byte, 512)
-		_, err := c.Conn.Read(buf)
-		if err != nil {
+		dp := NewDataPack()
+		headData := make([]byte, dp.GetHeadLen())
+		if _, err := io.ReadFull(c.GetTCPConnection(), headData); err != nil {
 			fmt.Println("recv buf err ", err)
 			c.ExitBuffChan <- true
 			continue
 		}
+		msg, err := dp.Unpack(headData)
+		if err != nil {
+			fmt.Println("unpack error ", err)
+			c.ExitBuffChan <- true
+			continue
+		}
+		//buf := make([]byte, utils.GlobalObject.MaxPacketSize)
+		//_, err := c.Conn.Read(buf)
+		//if err != nil {
+		//	fmt.Println("recv buf err ", err)
+		//	c.ExitBuffChan <- true
+		//	continue
+		//}
+		var data []byte
+		if msg.GetDataLen() > 0 {
+			data = make([]byte, msg.GetDataLen())
+			if _, err := io.ReadFull(c.GetTCPConnection(), data); err != nil {
+				fmt.Println("read msg data error ", err)
+				c.ExitBuffChan <- true
+				continue
+			}
+		}
+		msg.SetData(data)
 		req := Request{
 			conn: c,
-			data: buf,
+			msg:  msg,
 		}
-		go func(request ziface.IRequest) {
-			c.Router.PreHandle(request)
-			c.Router.Handle(request)
-			c.Router.PostHandle(request)
-		}(&req)
+		go c.MsgHandler.DoMsgHandler(&req)
+		//go func(request ziface.IRequest) {
+		//	c.Router.PreHandle(request)
+		//	c.Router.Handle(request)
+		//	c.Router.PostHandle(request)
+		//}(&req)
 		//if err := c.handleAPI(c.Conn, buf, cnt); err != nil {
 		//	fmt.Println("connID ", c.ConnID, " handle is error")
 		//	c.ExitBuffChan <- true
@@ -73,9 +99,6 @@ func (c *Connection) Stop() {
 
 	//TODO Connection Stop() 如果用户注册了该链接的关闭回调业务，那么在此刻应该显示调用
 
-	// 关闭socket链接
-	c.Conn.Close()
-
 	//通知从缓冲队列读数据的业务，该链接已经关闭
 	c.ExitBuffChan <- true
 
@@ -96,4 +119,21 @@ func (c *Connection) GetConnID() uint32 {
 //获取远程客户端地址信息
 func (c *Connection) RemoteAddr() net.Addr {
 	return c.Conn.RemoteAddr()
+}
+func (c *Connection) SendMsg(msgId uint32, data []byte) error {
+	if c.isClosed == true {
+		return errors.New("Connection closed when send msg")
+	}
+	dp := NewDataPack()
+	msg, err := dp.Pack(NewMsgPackage(msgId, data))
+	if err != nil {
+		fmt.Println("Pack error msg id = ", msgId)
+		return errors.New("Pack error msg ")
+	}
+	if _, err := c.Conn.Write(msg); err != nil {
+		fmt.Println("Write msg id ", msgId, " error ")
+		c.ExitBuffChan <- true
+		return errors.New("conn Write error")
+	}
+	return nil
 }

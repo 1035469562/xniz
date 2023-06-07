@@ -9,6 +9,7 @@ import (
 )
 
 func main() {
+
 	fmt.Println("Client Test ... start")
 	//3秒之后发起测试请求，给服务端开启服务的机会
 	time.Sleep(3 * time.Second)
@@ -22,7 +23,7 @@ func main() {
 	for {
 		//发封包message消息
 		dp := znet.NewDataPack()
-		msg, _ := dp.Pack(znet.NewMsgPackage(0, []byte("Zinx V0.5 Client Test Message")))
+		msg, _ := dp.Pack(znet.NewMsgPackage(0, []byte("Zinx V0.6 Client0 Test Message")))
 		_, err := conn.Write(msg)
 		if err != nil {
 			fmt.Println("write error err ", err)

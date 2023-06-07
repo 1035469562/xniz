@@ -9,11 +9,11 @@ import (
 )
 
 type Server struct {
-	Name      string
-	IPVersion string
-	IP        string
-	Port      int
-	Router    ziface.IRouter
+	Name       string
+	IPVersion  string
+	IP         string
+	Port       int
+	msgHandler ziface.IMsgHandle
 }
 
 //func CallBackTOClient(conn *net.TCPConn, data []byte, cnt int) error {
@@ -56,7 +56,7 @@ func (s *Server) Start() {
 				fmt.Println("Accept err ", err)
 				continue
 			}
-			dealConn := NewConnection(conn, cid, s.Router)
+			dealConn := NewConnection(conn, cid, s.msgHandler)
 			go dealConn.Start()
 		}
 	}()
@@ -70,18 +70,18 @@ func (s *Server) Serve() {
 		time.Sleep(10 * time.Second)
 	}
 }
-func (s *Server) AddRouter(router ziface.IRouter) {
-	s.Router = router
-	fmt.Println("Add Router succ! ")
+func (s *Server) AddRouter(msgId uint32, router ziface.IRouter) {
+	s.msgHandler.AddRouter(msgId, router)
+	fmt.Println("Add router succ! msgId = ", msgId)
 }
 
 func NewServer(name string) ziface.IServer {
 	s := &Server{
-		Name:      name,
-		IPVersion: "tcp4",
-		IP:        "0.0.0.0",
-		Port:      7777,
-		Router:    nil,
+		Name:       name,
+		IPVersion:  "tcp4",
+		IP:         "0.0.0.0",
+		Port:       7777,
+		msgHandler: NewMsgHandle(),
 	}
 	return s
 }
