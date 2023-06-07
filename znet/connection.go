@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"xniz/utils"
 	"xniz/ziface"
 )
 
@@ -14,6 +15,7 @@ type Connection struct {
 	isClosed     bool
 	MsgHandler   ziface.IMsgHandle
 	ExitBuffChan chan bool
+	msgChan      chan []byte
 }
 
 func NewConnection(conn *net.TCPConn, connID uint32, msgHandler ziface.IMsgHandle) *Connection {
@@ -23,6 +25,7 @@ func NewConnection(conn *net.TCPConn, connID uint32, msgHandler ziface.IMsgHandl
 		isClosed:     false,
 		MsgHandler:   msgHandler,
 		ExitBuffChan: make(chan bool, 1),
+		msgChan:      make(chan []byte),
 	}
 	return c
 }
@@ -64,8 +67,11 @@ func (c *Connection) StartReader() {
 			conn: c,
 			msg:  msg,
 		}
-		go c.MsgHandler.DoMsgHandler(&req)
-		//go func(request ziface.IRequest) {
+		if utils.GlobalObject.WorkerPoolSize > 0 {
+			c.MsgHandler.SendMsgToTaskQueue(&req)
+		} else {
+			go c.MsgHandler.DoMsgHandler(&req)
+		} //go func(request ziface.IRequest) {
 		//	c.Router.PreHandle(request)
 		//	c.Router.Handle(request)
 		//	c.Router.PostHandle(request)
@@ -81,12 +87,27 @@ func (c *Connection) Start() {
 
 	//开启处理该链接读取到客户端数据之后的请求业务
 	go c.StartReader()
+	go c.StartWriter()
 
 	for {
 		select {
 		case <-c.ExitBuffChan:
 			//得到退出消息，不再阻塞
 			return
+		}
+	}
+}
+
+func (c *Connection) StartWriter() {
+	fmt.Println("[Writer Goroutine is running]")
+	defer fmt.Println(c.RemoteAddr().String(), "[conn Writer exit!]")
+	for {
+		select {
+		case data := <-c.msgChan:
+			if _, err := c.Conn.Write(data); err != nil {
+				fmt.Println("Send Data error:, ", err, " Conn Writer exit")
+				return
+			}
 		}
 	}
 }
@@ -98,7 +119,7 @@ func (c *Connection) Stop() {
 	c.isClosed = true
 
 	//TODO Connection Stop() 如果用户注册了该链接的关闭回调业务，那么在此刻应该显示调用
-
+	//c.Conn.Close()
 	//通知从缓冲队列读数据的业务，该链接已经关闭
 	c.ExitBuffChan <- true
 
@@ -135,5 +156,6 @@ func (c *Connection) SendMsg(msgId uint32, data []byte) error {
 		c.ExitBuffChan <- true
 		return errors.New("conn Write error")
 	}
+	c.msgChan <- msg
 	return nil
 }
